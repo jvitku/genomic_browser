@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gnomAD Mitochondrial Variant Browser</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #f8f9fa;
+  --card: #ffffff;
+  --border: #dee2e6;
+  --text: #212529;
+  --text-muted: #6c757d;
+  --primary: #1a73e8;
+  --primary-light: #e8f0fe;
+  --high: #d32f2f;
+  --moderate: #f57c00;
+  --low: #388e3c;
+  --modifier: #757575;
+  --gene-protein: #4285f4;
+  --gene-trna: #34a853;
+  --gene-rrna: #fbbc04;
+  --header-bg: #1a237e;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+a { color: var(--primary); text-decoration: none; }
+
+/* Header */
+.header { background: var(--header-bg); color: white; padding: 12px 24px; display: flex; align-items: center; gap: 24px; }
+.header h1 { font-size: 20px; font-weight: 600; white-space: nowrap; }
+.header .subtitle { font-size: 13px; opacity: 0.8; }
+.search-box { flex: 1; max-width: 500px; position: relative; }
+.search-box input { width: 100%; padding: 8px 12px 8px 36px; border: none; border-radius: 6px; font-size: 14px; background: rgba(255,255,255,0.15); color: white; outline: none; }
+.search-box input::placeholder { color: rgba(255,255,255,0.6); }
+.search-box input:focus { background: rgba(255,255,255,0.25); }
+.search-box svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.6; }
+.summary-badges { display: flex; gap: 12px; margin-left: auto; }
+.badge { background: rgba(255,255,255,0.15); padding: 4px 12px; border-radius: 12px; font-size: 12px; white-space: nowrap; }
+
+/* Chromosome Map */
+.chrom-section { background: var(--card); border-bottom: 1px solid var(--border); padding: 16px 24px; }
+.chrom-section h3 { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; font-weight: 500; }
+.chrom-container { position: relative; height: 60px; margin-bottom: 4px; }
+.chrom-bar { position: absolute; top: 0; left: 0; right: 0; height: 28px; background: #e0e0e0; border-radius: 14px; overflow: hidden; cursor: pointer; }
+.gene-block { position: absolute; top: 0; height: 100%; cursor: pointer; opacity: 0.85; transition: opacity 0.15s; display: flex; align-items: center; justify-content: center; font-size: 10px; color: white; font-weight: 500; overflow: hidden; white-space: nowrap; }
+.gene-block:hover { opacity: 1; z-index: 2; }
+.gene-block.protein { background: var(--gene-protein); }
+.gene-block.tRNA { background: var(--gene-trna); }
+.gene-block.rRNA { background: var(--gene-rrna); }
+.density-canvas { position: absolute; top: 32px; left: 0; width: 100%; height: 24px; }
+.chrom-legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.chrom-legend span { display: flex; align-items: center; gap: 4px; }
+.chrom-legend .dot { width: 10px; height: 10px; border-radius: 2px; }
+.selection-overlay { position: absolute; top: 0; height: 28px; background: rgba(26,115,232,0.2); border: 2px solid var(--primary); border-radius: 4px; pointer-events: none; display: none; }
+
+/* Main content */
+.main { display: flex; gap: 0; min-height: calc(100vh - 160px); }
+
+/* Filter sidebar */
+.filters { width: 260px; min-width: 260px; background: var(--card); border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+.filter-group { margin-bottom: 16px; }
+.filter-group label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.filter-group input[type="number"],
+.filter-group select { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; }
+.filter-group input[type="number"] { -moz-appearance: textfield; }
+.pos-range { display: flex; gap: 6px; align-items: center; }
+.pos-range input { flex: 1; }
+.pos-range span { color: var(--text-muted); }
+.impact-checks { display: flex; flex-wrap: wrap; gap: 6px; }
+.impact-check { display: flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border); transition: all 0.15s; }
+.impact-check:hover { border-color: var(--primary); }
+.impact-check.active { color: white; border-color: transparent; }
+.impact-check.active.HIGH { background: var(--high); }
+.impact-check.active.MODERATE { background: var(--moderate); }
+.impact-check.active.LOW { background: var(--low); }
+.impact-check.active.MODIFIER { background: var(--modifier); }
+.impact-dot { width: 8px; height: 8px; border-radius: 50%; }
+.impact-dot.HIGH { background: var(--high); }
+.impact-dot.MODERATE { background: var(--moderate); }
+.impact-dot.LOW { background: var(--low); }
+.impact-dot.MODIFIER { background: var(--modifier); }
+.af-range { display: flex; gap: 6px; align-items: center; }
+.af-range input { flex: 1; width: 80px; }
+.filter-check { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin-bottom: 4px; }
+.btn-reset { width: 100%; padding: 8px; background: none; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; cursor: pointer; color: var(--text-muted); margin-top: 8px; }
+.btn-reset:hover { background: var(--bg); color: var(--text); }
+
+/* Variant table area */
+.table-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.table-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
+.table-header .result-count { font-size: 13px; color: var(--text-muted); }
+.table-header .result-count strong { color: var(--text); }
+.table-scroll { flex: 1; overflow: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead { position: sticky; top: 0; z-index: 1; }
+th { background: #f1f3f4; padding: 8px 10px; text-align: left; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--text-muted); border-bottom: 2px solid var(--border); cursor: pointer; white-space: nowrap; user-select: none; }
+th:hover { background: #e8eaed; }
+th .sort-arrow { font-size: 10px; margin-left: 4px; }
+td { padding: 7px 10px; border-bottom: 1px solid #f0f0f0; white-space: nowrap; }
+tr { cursor: pointer; transition: background 0.1s; }
+tr:hover { background: var(--primary-light); }
+tr.selected { background: #d2e3fc; }
+.impact-badge { padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; color: white; }
+.impact-badge.HIGH { background: var(--high); }
+.impact-badge.MODERATE { background: var(--moderate); }
+.impact-badge.LOW { background: var(--low); }
+.impact-badge.MODIFIER { background: var(--modifier); }
+.filter-badge { padding: 2px 6px; border-radius: 3px; font-size: 11px; }
+.filter-badge.PASS { background: #e8f5e9; color: #2e7d32; }
+.filter-badge.FAIL { background: #fce4ec; color: #c62828; }
+.af-val { font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; }
+
+/* Pagination */
+.pagination { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; background: var(--card); border-top: 1px solid var(--border); }
+.pagination button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 4px; background: white; cursor: pointer; font-size: 13px; }
+.pagination button:hover:not(:disabled) { background: var(--primary-light); border-color: var(--primary); }
+.pagination button:disabled { opacity: 0.4; cursor: default; }
+.pagination .page-info { font-size: 13px; color: var(--text-muted); }
+
+/* Detail panel */
+.detail-panel { width: 0; overflow: hidden; transition: width 0.25s ease; background: var(--card); border-left: 1px solid var(--border); }
+.detail-panel.open { width: 420px; min-width: 420px; }
+.detail-content { width: 420px; padding: 16px; overflow-y: auto; height: 100%; }
+.detail-close { float: right; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-muted); padding: 4px 8px; }
+.detail-close:hover { color: var(--text); }
+.detail-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+.detail-subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
+.detail-section { margin-bottom: 16px; }
+.detail-section h4 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+.detail-field { font-size: 13px; }
+.detail-field .label { color: var(--text-muted); font-size: 11px; }
+.detail-field .value { font-weight: 500; }
+.pop-chart-container { height: 220px; margin-top: 8px; }
+.hap-chart-container { height: 180px; margin-top: 8px; }
+.pathogenicity-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.path-badge { padding: 4px 10px; border-radius: 4px; font-size: 12px; background: #f5f5f5; }
+
+/* Loading */
+.loading { display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--text-muted); }
+.spinner { width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Gene tooltip */
+.gene-tooltip { position: fixed; background: #333; color: white; padding: 6px 10px; border-radius: 4px; font-size: 12px; pointer-events: none; z-index: 100; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div>
+    <h1>gnomAD MT Browser</h1>
+    <div class="subtitle">Mitochondrial Variant Browser v3.1</div>
+  </div>
+  <div class="search-box">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="white"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/></svg>
+    <input type="text" id="searchInput" placeholder="Search gene, position (e.g. chrM:1000-2000), or variant...">
+  </div>
+  <div class="summary-badges" id="summaryBadges"></div>
+</div>
+
+<!-- Chromosome Map -->
+<div class="chrom-section">
+  <h3>Mitochondrial Genome (chrM: 16,569 bp)</h3>
+  <div class="chrom-container" id="chromContainer">
+    <div class="chrom-bar" id="chromBar"></div>
+    <div class="selection-overlay" id="selectionOverlay"></div>
+    <canvas class="density-canvas" id="densityCanvas"></canvas>
+  </div>
+  <div class="chrom-legend">
+    <span><span class="dot" style="background:var(--gene-protein)"></span> Protein-coding</span>
+    <span><span class="dot" style="background:var(--gene-trna)"></span> tRNA</span>
+    <span><span class="dot" style="background:var(--gene-rrna)"></span> rRNA</span>
+    <span style="margin-left: auto; cursor: pointer;" id="clearSelection" title="Clear region selection">[Clear selection]</span>
+  </div>
+</div>
+
+<!-- Main content -->
+<div class="main">
+  <!-- Filters -->
+  <div class="filters">
+    <div class="filter-group">
+      <label>Position Range</label>
+      <div class="pos-range">
+        <input type="number" id="posStart" placeholder="Start" min="1" max="16569">
+        <span>&ndash;</span>
+        <input type="number" id="posEnd" placeholder="End" min="1" max="16569">
+      </div>
+    </div>
+    <div class="filter-group">
+      <label>Gene</label>
+      <select id="geneFilter"><option value="">All genes</option></select>
+    </div>
+    <div class="filter-group">
+      <label>Impact</label>
+      <div class="impact-checks" id="impactChecks">
+        <div class="impact-check active HIGH" data-impact="HIGH"><span class="impact-dot HIGH"></span>High</div>
+        <div class="impact-check active MODERATE" data-impact="MODERATE"><span class="impact-dot MODERATE"></span>Moderate</div>
+        <div class="impact-check active LOW" data-impact="LOW"><span class="impact-dot LOW"></span>Low</div>
+        <div class="impact-check active MODIFIER" data-impact="MODIFIER"><span class="impact-dot MODIFIER"></span>Modifier</div>
+      </div>
+    </div>
+    <div class="filter-group">
+      <label>Consequence</label>
+      <select id="consequenceFilter"><option value="">All consequences</option></select>
+    </div>
+    <div class="filter-group">
+      <label>Allele Frequency (AF_hom + AF_het)</label>
+      <div class="af-range">
+        <input type="number" id="afMin" placeholder="Min" min="0" max="1" step="0.0001">
+        <span>&ndash;</span>
+        <input type="number" id="afMax" placeholder="Max" min="0" max="1" step="0.0001">
+      </div>
+    </div>
+    <div class="filter-group">
+      <label>Filter Status</label>
+      <select id="filterStatus">
+        <option value="">All</option>
+        <option value="PASS">PASS only</option>
+      </select>
+    </div>
+    <button class="btn-reset" id="resetFilters">Reset All Filters</button>
+  </div>
+
+  <!-- Table -->
+  <div class="table-area">
+    <div class="table-header">
+      <div class="result-count" id="resultCount">Loading...</div>
+      <div>
+        <select id="perPage" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;">
+          <option value="25">25 / page</option>
+          <option value="50" selected>50 / page</option>
+          <option value="100">100 / page</option>
+          <option value="200">200 / page</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="pos">Pos <span class="sort-arrow"></span></th>
+            <th data-sort="ref">Ref</th>
+            <th data-sort="alt">Alt</th>
+            <th data-sort="symbol">Gene <span class="sort-arrow"></span></th>
+            <th data-sort="consequence">Consequence <span class="sort-arrow"></span></th>
+            <th data-sort="impact">Impact <span class="sort-arrow"></span></th>
+            <th data-sort="AF_hom">AF Hom <span class="sort-arrow"></span></th>
+            <th data-sort="AF_het">AF Het <span class="sort-arrow"></span></th>
+            <th data-sort="AN">AN <span class="sort-arrow"></span></th>
+            <th data-sort="filter">Filter</th>
+          </tr>
+        </thead>
+        <tbody id="variantTable"></tbody>
+      </table>
+    </div>
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+  <!-- Detail Panel -->
+  <div class="detail-panel" id="detailPanel">
+    <div class="detail-content" id="detailContent"></div>
+  </div>
+</div>
+
+<!-- Gene tooltip -->
+<div class="gene-tooltip" id="geneTooltip" style="display:none"></div>
+
+<script>
+// ─── State ───
+const state = {
+  page: 1,
+  perPage: 50,
+  sortBy: 'pos',
+  sortOrder: 'asc',
+  search: '',
+  posStart: null,
+  posEnd: null,
+  gene: '',
+  consequence: '',
+  impacts: new Set(['HIGH', 'MODERATE', 'LOW', 'MODIFIER']),
+  afMin: null,
+  afMax: null,
+  filter: '',
+  selectedVariant: null,
+  genes: [],
+  chromLength: 16569,
+};
+
+let debounceTimer = null;
+let popChart = null;
+let hapChart = null;
+
+// ─── API ───
+async function fetchJSON(url) {
+  const resp = await fetch(url);
+  return resp.json();
+}
+
+async function loadFilters() {
+  const data = await fetchJSON('/api/filters');
+  const geneSelect = document.getElementById('geneFilter');
+  data.genes.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g; opt.textContent = g;
+    geneSelect.appendChild(opt);
+  });
+  const consSelect = document.getElementById('consequenceFilter');
+  data.consequences.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c.replace(/_/g, ' ');
+    consSelect.appendChild(opt);
+  });
+}
+
+async function loadSummary() {
+  const data = await fetchJSON('/api/summary');
+  document.getElementById('summaryBadges').innerHTML = `
+    <span class="badge">${data.total.toLocaleString()} variants</span>
+    <span class="badge">${data.pass_count.toLocaleString()} PASS</span>
+    <span class="badge">${data.by_impact.HIGH || 0} High Impact</span>
+  `;
+}
+
+async function loadGenes() {
+  const data = await fetchJSON('/api/genes');
+  state.genes = data.genes;
+  state.chromLength = data.chrom_length;
+  renderChromosomeMap();
+}
+
+async function loadVariants() {
+  const params = new URLSearchParams();
+  params.set('page', state.page);
+  params.set('per_page', state.perPage);
+  params.set('sort_by', state.sortBy);
+  params.set('sort_order', state.sortOrder);
+  if (state.search) params.set('search', state.search);
+  if (state.posStart) params.set('pos_start', state.posStart);
+  if (state.posEnd) params.set('pos_end', state.posEnd);
+  if (state.gene) params.set('gene', state.gene);
+  if (state.consequence) params.set('consequence', state.consequence);
+  if (state.impacts.size < 4) params.set('impact', [...state.impacts].join(','));
+  if (state.afMin !== null && state.afMin !== '') params.set('af_min', state.afMin);
+  if (state.afMax !== null && state.afMax !== '') params.set('af_max', state.afMax);
+  if (state.filter) params.set('filter', state.filter);
+
+  const data = await fetchJSON('/api/variants?' + params);
+  renderTable(data);
+  renderPagination(data);
+}
+
+async function loadVariantDetail(pos, ref, alt) {
+  const data = await fetchJSON(`/api/variant/${pos}/${encodeURIComponent(ref)}/${encodeURIComponent(alt)}`);
+  state.selectedVariant = data;
+  renderDetail(data);
+}
+
+// ─── Chromosome Map ───
+function renderChromosomeMap() {
+  const bar = document.getElementById('chromBar');
+  bar.innerHTML = '';
+  const L = state.chromLength;
+  state.genes.forEach(g => {
+    const left = (g.start / L) * 100;
+    const width = ((g.end - g.start) / L) * 100;
+    const div = document.createElement('div');
+    div.className = `gene-block ${g.type === 'protein_coding' ? 'protein' : g.type}`;
+    div.style.left = left + '%';
+    div.style.width = Math.max(width, 0.3) + '%';
+    if (width > 2) div.textContent = g.name.replace('MT-', '');
+    div.dataset.gene = g.name;
+    div.dataset.start = g.start;
+    div.dataset.end = g.end;
+    div.addEventListener('click', () => {
+      state.posStart = g.start;
+      state.posEnd = g.end;
+      state.gene = g.name;
+      document.getElementById('posStart').value = g.start;
+      document.getElementById('posEnd').value = g.end;
+      document.getElementById('geneFilter').value = g.name;
+      showSelectionOverlay(g.start, g.end);
+      state.page = 1;
+      loadVariants();
+    });
+    div.addEventListener('mouseenter', (e) => showGeneTooltip(e, g));
+    div.addEventListener('mouseleave', hideGeneTooltip);
+    bar.appendChild(div);
+  });
+  renderDensityTrack();
+}
+
+function showSelectionOverlay(start, end) {
+  const overlay = document.getElementById('selectionOverlay');
+  const L = state.chromLength;
+  overlay.style.left = (start / L) * 100 + '%';
+  overlay.style.width = ((end - start) / L) * 100 + '%';
+  overlay.style.display = 'block';
+}
+
+function showGeneTooltip(e, gene) {
+  const tip = document.getElementById('geneTooltip');
+  tip.textContent = `${gene.name} (${gene.start.toLocaleString()}-${gene.end.toLocaleString()}) — ${gene.variant_count} variants`;
+  tip.style.left = e.clientX + 12 + 'px';
+  tip.style.top = e.clientY - 30 + 'px';
+  tip.style.display = 'block';
+}
+
+function hideGeneTooltip() {
+  document.getElementById('geneTooltip').style.display = 'none';
+}
+
+async function renderDensityTrack() {
+  const canvas = document.getElementById('densityCanvas');
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width;
+  canvas.height = 24;
+  const ctx = canvas.getContext('2d');
+
+  const data = await fetchJSON('/api/density');
+  const counts = data.counts;
+  const bins = data.bins;
+  const maxCount = Math.max(...counts, 1);
+  const barW = canvas.width / bins;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  counts.forEach((c, i) => {
+    const h = (c / maxCount) * 20;
+    const intensity = c / maxCount;
+    ctx.fillStyle = `rgba(26, 115, 232, ${0.2 + intensity * 0.8})`;
+    ctx.fillRect(i * barW, 22 - h, barW - 0.5, h);
+  });
+}
+
+// ─── Table ───
+function renderTable(data) {
+  const tbody = document.getElementById('variantTable');
+  document.getElementById('resultCount').innerHTML =
+    `Showing <strong>${((data.page - 1) * data.per_page + 1).toLocaleString()}-${Math.min(data.page * data.per_page, data.total).toLocaleString()}</strong> of <strong>${data.total.toLocaleString()}</strong> variants`;
+
+  if (data.variants.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted)">No variants match your filters</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.variants.map(v => `
+    <tr data-pos="${v.pos}" data-ref="${v.ref}" data-alt="${v.alt}"
+        class="${state.selectedVariant && state.selectedVariant.pos === v.pos && state.selectedVariant.ref === v.ref && state.selectedVariant.alt === v.alt ? 'selected' : ''}">
+      <td>${v.pos.toLocaleString()}</td>
+      <td>${v.ref.length > 10 ? v.ref.slice(0,10) + '...' : v.ref}</td>
+      <td>${v.alt.length > 10 ? v.alt.slice(0,10) + '...' : v.alt}</td>
+      <td><strong>${v.symbol || '—'}</strong></td>
+      <td>${(v.consequence || '—').replace(/_/g, ' ').replace(/&/g, ', ')}</td>
+      <td>${v.impact ? `<span class="impact-badge ${v.impact}">${v.impact}</span>` : '—'}</td>
+      <td class="af-val">${v.AF_hom !== null ? v.AF_hom.toExponential(2) : '—'}</td>
+      <td class="af-val">${v.AF_het !== null ? v.AF_het.toExponential(2) : '—'}</td>
+      <td>${v.AN ? v.AN.toLocaleString() : '—'}</td>
+      <td><span class="filter-badge ${v.filter === 'PASS' ? 'PASS' : 'FAIL'}">${v.filter}</span></td>
+    </tr>
+  `).join('');
+
+  // Click handler
+  tbody.querySelectorAll('tr').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const pos = parseInt(tr.dataset.pos);
+      const ref = tr.dataset.ref;
+      const alt = tr.dataset.alt;
+      loadVariantDetail(pos, ref, alt);
+      tbody.querySelectorAll('tr').forEach(r => r.classList.remove('selected'));
+      tr.classList.add('selected');
+    });
+  });
+}
+
+function renderPagination(data) {
+  const div = document.getElementById('pagination');
+  div.innerHTML = `
+    <button id="prevPage" ${data.page <= 1 ? 'disabled' : ''}>&#8592; Prev</button>
+    <span class="page-info">Page ${data.page} of ${data.pages}</span>
+    <button id="nextPage" ${data.page >= data.pages ? 'disabled' : ''}>Next &#8594;</button>
+  `;
+  document.getElementById('prevPage').addEventListener('click', () => {
+    if (state.page > 1) { state.page--; loadVariants(); }
+  });
+  document.getElementById('nextPage').addEventListener('click', () => {
+    if (state.page < data.pages) { state.page++; loadVariants(); }
+  });
+}
+
+// ─── Detail Panel ───
+function renderDetail(v) {
+  const panel = document.getElementById('detailPanel');
+  const content = document.getElementById('detailContent');
+  panel.classList.add('open');
+
+  const afTotal = ((v.AF_hom || 0) + (v.AF_het || 0));
+
+  content.innerHTML = `
+    <button class="detail-close" id="detailClose">&times;</button>
+    <div class="detail-title">${v.variant_collapsed || `${v.ref}${v.pos}${v.alt}`}</div>
+    <div class="detail-subtitle">chrM:${v.pos.toLocaleString()} ${v.ref} &rarr; ${v.alt}</div>
+
+    <div class="detail-section">
+      <h4>Annotation</h4>
+      <div class="detail-grid">
+        <div class="detail-field"><div class="label">Gene</div><div class="value">${v.symbol || '—'}</div></div>
+        <div class="detail-field"><div class="label">Impact</div><div class="value"><span class="impact-badge ${v.impact}">${v.impact || '—'}</span></div></div>
+        <div class="detail-field"><div class="label">Consequence</div><div class="value">${(v.consequence || '—').replace(/_/g, ' ')}</div></div>
+        <div class="detail-field"><div class="label">Variant Class</div><div class="value">${v.variant_class || '—'}</div></div>
+        <div class="detail-field"><div class="label">Biotype</div><div class="value">${v.biotype || '—'}</div></div>
+        <div class="detail-field"><div class="label">HGVSc</div><div class="value" style="word-break:break-all">${v.hgvsc || '—'}</div></div>
+        <div class="detail-field"><div class="label">HGVSp</div><div class="value" style="word-break:break-all">${v.hgvsp || '—'}</div></div>
+        <div class="detail-field"><div class="label">Amino Acids</div><div class="value">${v.amino_acids || '—'}</div></div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h4>Frequency</h4>
+      <div class="detail-grid">
+        <div class="detail-field"><div class="label">AN</div><div class="value">${v.AN ? v.AN.toLocaleString() : '—'}</div></div>
+        <div class="detail-field"><div class="label">Total AF</div><div class="value">${afTotal.toExponential(3)}</div></div>
+        <div class="detail-field"><div class="label">AC Hom</div><div class="value">${v.AC_hom != null ? v.AC_hom.toLocaleString() : '—'}</div></div>
+        <div class="detail-field"><div class="label">AF Hom</div><div class="value">${v.AF_hom != null ? v.AF_hom.toExponential(3) : '—'}</div></div>
+        <div class="detail-field"><div class="label">AC Het</div><div class="value">${v.AC_het != null ? v.AC_het.toLocaleString() : '—'}</div></div>
+        <div class="detail-field"><div class="label">AF Het</div><div class="value">${v.AF_het != null ? v.AF_het.toExponential(3) : '—'}</div></div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h4>Population Frequencies (AF Hom)</h4>
+      <div class="pop-chart-container"><canvas id="popChart"></canvas></div>
+    </div>
+
+    <div class="detail-section">
+      <h4>Haplogroup Frequencies (AF Hom)</h4>
+      <div class="hap-chart-container"><canvas id="hapChart"></canvas></div>
+    </div>
+
+    <div class="detail-section">
+      <h4>Pathogenicity</h4>
+      <div class="detail-grid">
+        <div class="detail-field"><div class="label">MitoTip Score</div><div class="value">${v.mitotip_score != null ? v.mitotip_score.toFixed(2) : '—'}</div></div>
+        <div class="detail-field"><div class="label">MitoTip Prediction</div><div class="value">${v.mitotip_trna_prediction || '—'}</div></div>
+        <div class="detail-field"><div class="label">PON-mt-tRNA</div><div class="value">${v.pon_mt_trna_prediction || '—'}</div></div>
+        <div class="detail-field"><div class="label">ML Pathogenicity</div><div class="value">${v.pon_ml_probability_of_pathogenicity != null ? v.pon_ml_probability_of_pathogenicity.toFixed(3) : '—'}</div></div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h4>Quality</h4>
+      <div class="detail-grid">
+        <div class="detail-field"><div class="label">Filter</div><div class="value"><span class="filter-badge ${v.filter === 'PASS' ? 'PASS' : 'FAIL'}">${v.filter}</span></div></div>
+        <div class="detail-field"><div class="label">Mean Depth</div><div class="value">${v.dp_mean != null ? v.dp_mean.toFixed(1) : '—'}</div></div>
+        <div class="detail-field"><div class="label">Mean MQ</div><div class="value">${v.mq_mean != null ? v.mq_mean.toFixed(1) : '—'}</div></div>
+        <div class="detail-field"><div class="label">Mean TLOD</div><div class="value">${v.tlod_mean != null ? v.tlod_mean.toFixed(1) : '—'}</div></div>
+        <div class="detail-field"><div class="label">Haplogroup Defining</div><div class="value">${v.hap_defining_variant ? 'Yes' : 'No'}</div></div>
+        <div class="detail-field"><div class="label">Common Low Het</div><div class="value">${v.common_low_heteroplasmy ? 'Yes' : 'No'}</div></div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('detailClose').addEventListener('click', () => {
+    panel.classList.remove('open');
+    state.selectedVariant = null;
+    document.querySelectorAll('#variantTable tr.selected').forEach(r => r.classList.remove('selected'));
+  });
+
+  renderPopChart(v);
+  renderHapChart(v);
+}
+
+function renderPopChart(v) {
+  if (popChart) popChart.destroy();
+  const popLabels = ['AFR', 'AMI', 'AMR', 'ASJ', 'EAS', 'FIN', 'NFE', 'OTH', 'SAS', 'MID'];
+  const popKeys = ['afr', 'ami', 'amr', 'asj', 'eas', 'fin', 'nfe', 'oth', 'sas', 'mid'];
+  const afHomData = popKeys.map(k => v.pop_data?.[k]?.AF_hom || 0);
+  const afHetData = popKeys.map(k => v.pop_data?.[k]?.AF_het || 0);
+
+  const ctx = document.getElementById('popChart');
+  if (!ctx) return;
+  popChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: popLabels,
+      datasets: [
+        { label: 'AF Hom', data: afHomData, backgroundColor: '#4285f4' },
+        { label: 'AF Het', data: afHetData, backgroundColor: '#fbbc04' },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } } },
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: 'Allele Frequency', font: { size: 11 } }, ticks: { font: { size: 10 } } },
+        x: { ticks: { font: { size: 10 } } },
+      },
+    }
+  });
+}
+
+function renderHapChart(v) {
+  if (hapChart) hapChart.destroy();
+  const hapKeys = Object.keys(v.hap_data || {});
+  const afHomData = hapKeys.map(k => v.hap_data?.[k]?.AF_hom || 0);
+
+  const ctx = document.getElementById('hapChart');
+  if (!ctx) return;
+  hapChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: hapKeys,
+      datasets: [{ label: 'AF Hom', data: afHomData, backgroundColor: '#34a853' }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: 'AF Hom', font: { size: 11 } }, ticks: { font: { size: 10 } } },
+        x: { ticks: { font: { size: 9 }, maxRotation: 90 } },
+      },
+    }
+  });
+}
+
+// ─── Sorting ───
+document.querySelectorAll('th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.sort;
+    if (state.sortBy === col) {
+      state.sortOrder = state.sortOrder === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sortBy = col;
+      state.sortOrder = 'asc';
+    }
+    // Update arrows
+    document.querySelectorAll('th .sort-arrow').forEach(s => s.textContent = '');
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = state.sortOrder === 'asc' ? '▲' : '▼';
+    state.page = 1;
+    loadVariants();
+  });
+});
+
+// ─── Filter events ───
+function debouncedLoad() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => { state.page = 1; loadVariants(); }, 300);
+}
+
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  state.search = e.target.value;
+  debouncedLoad();
+});
+
+document.getElementById('posStart').addEventListener('input', (e) => {
+  state.posStart = e.target.value ? parseInt(e.target.value) : null;
+  if (state.posStart && state.posEnd) showSelectionOverlay(state.posStart, state.posEnd);
+  debouncedLoad();
+});
+
+document.getElementById('posEnd').addEventListener('input', (e) => {
+  state.posEnd = e.target.value ? parseInt(e.target.value) : null;
+  if (state.posStart && state.posEnd) showSelectionOverlay(state.posStart, state.posEnd);
+  debouncedLoad();
+});
+
+document.getElementById('geneFilter').addEventListener('change', (e) => {
+  state.gene = e.target.value;
+  state.page = 1;
+  loadVariants();
+});
+
+document.getElementById('consequenceFilter').addEventListener('change', (e) => {
+  state.consequence = e.target.value;
+  state.page = 1;
+  loadVariants();
+});
+
+document.querySelectorAll('.impact-check').forEach(el => {
+  el.addEventListener('click', () => {
+    const impact = el.dataset.impact;
+    if (el.classList.contains('active')) {
+      el.classList.remove('active');
+      state.impacts.delete(impact);
+    } else {
+      el.classList.add('active');
+      state.impacts.add(impact);
+    }
+    state.page = 1;
+    loadVariants();
+  });
+});
+
+document.getElementById('afMin').addEventListener('input', (e) => {
+  state.afMin = e.target.value ? parseFloat(e.target.value) : null;
+  debouncedLoad();
+});
+document.getElementById('afMax').addEventListener('input', (e) => {
+  state.afMax = e.target.value ? parseFloat(e.target.value) : null;
+  debouncedLoad();
+});
+
+document.getElementById('filterStatus').addEventListener('change', (e) => {
+  state.filter = e.target.value;
+  state.page = 1;
+  loadVariants();
+});
+
+document.getElementById('perPage').addEventListener('change', (e) => {
+  state.perPage = parseInt(e.target.value);
+  state.page = 1;
+  loadVariants();
+});
+
+document.getElementById('resetFilters').addEventListener('click', () => {
+  state.search = '';
+  state.posStart = null;
+  state.posEnd = null;
+  state.gene = '';
+  state.consequence = '';
+  state.impacts = new Set(['HIGH', 'MODERATE', 'LOW', 'MODIFIER']);
+  state.afMin = null;
+  state.afMax = null;
+  state.filter = '';
+  state.page = 1;
+  document.getElementById('searchInput').value = '';
+  document.getElementById('posStart').value = '';
+  document.getElementById('posEnd').value = '';
+  document.getElementById('geneFilter').value = '';
+  document.getElementById('consequenceFilter').value = '';
+  document.getElementById('afMin').value = '';
+  document.getElementById('afMax').value = '';
+  document.getElementById('filterStatus').value = '';
+  document.querySelectorAll('.impact-check').forEach(el => el.classList.add('active'));
+  document.getElementById('selectionOverlay').style.display = 'none';
+  loadVariants();
+});
+
+document.getElementById('clearSelection').addEventListener('click', () => {
+  state.posStart = null;
+  state.posEnd = null;
+  state.gene = '';
+  document.getElementById('posStart').value = '';
+  document.getElementById('posEnd').value = '';
+  document.getElementById('geneFilter').value = '';
+  document.getElementById('selectionOverlay').style.display = 'none';
+  state.page = 1;
+  loadVariants();
+});
+
+// ─── Init ───
+(async function init() {
+  await Promise.all([loadFilters(), loadSummary(), loadGenes()]);
+  loadVariants();
+  // Set initial sort arrow
+  document.querySelector('th[data-sort="pos"] .sort-arrow').textContent = '▲';
+})();
+</script>
+</body>
+</html>
